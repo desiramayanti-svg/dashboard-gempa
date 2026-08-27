@@ -7,6 +7,7 @@ import sqlite3
 import os
 import random
 import hashlib
+import hmac
 from datetime import datetime, timedelta
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -29,13 +30,24 @@ CITIES = [
 STAFF_ROLES = ["Admin", "Manager", "Agent", "Finance", "Marketing"]
 TRANSACTION_TYPES = ["Penjualan", "Sewa", "Komisi Agent", "Pengeluaran Operasional", "Lainnya"]
 
-# NOTE: hashing sederhana untuk kebutuhan demo/MVP internal.
-# Untuk produksi sesungguhnya gunakan bcrypt/argon2 + salt unik per-user.
-_PEPPER = "raya-houses-secret-pepper"
+# NOTE: hashing berbasis PBKDF2-HMAC-SHA256 dengan salt unik per-user (stdlib saja,
+# tanpa dependensi tambahan). Cukup untuk kebutuhan MVP internal; untuk produksi
+# skala besar pertimbangkan bcrypt/argon2.
+_PBKDF2_ITERATIONS = 200_000
 
 
-def hash_password(raw_password: str) -> str:
-    return hashlib.sha256(f"{_PEPPER}:{raw_password}".encode("utf-8")).hexdigest()
+def _pbkdf2(raw_password: str, salt_hex: str) -> str:
+    salt = bytes.fromhex(salt_hex)
+    dk = hashlib.pbkdf2_hmac("sha256", raw_password.encode("utf-8"), salt, _PBKDF2_ITERATIONS)
+    return dk.hex()
+
+
+def hash_password(raw_password: str, salt_hex: str = None):
+    """Menghasilkan (hash, salt) baru jika salt tidak diberikan, atau hash untuk salt yang ada."""
+    if salt_hex is None:
+        salt_hex = os.urandom(16).hex()
+        return _pbkdf2(raw_password, salt_hex), salt_hex
+    return _pbkdf2(raw_password, salt_hex)
 
 
 def get_conn():
@@ -63,6 +75,7 @@ CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
+    password_salt TEXT NOT NULL,
     staff_id INTEGER,
     role TEXT NOT NULL,
     FOREIGN KEY(staff_id) REFERENCES staff(id)
@@ -147,9 +160,10 @@ def _seed_data(conn: sqlite3.Connection):
         ("agent.andi", "agent123", staff_ids["Andi Wijaya"], "Agent"),
     ]
     for username, pwd, sid, role in default_users:
+        pwd_hash, pwd_salt = hash_password(pwd)
         conn.execute(
-            "INSERT INTO users (username, password_hash, staff_id, role) VALUES (?,?,?,?)",
-            (username, hash_password(pwd), sid, role),
+            "INSERT INTO users (username, password_hash, password_salt, staff_id, role) VALUES (?,?,?,?,?)",
+            (username, pwd_hash, pwd_salt, sid, role),
         )
 
     agent_ids = [staff_ids[n] for n, r, *_ in staff_rows if r == "Agent"]
@@ -242,22 +256,32 @@ def _seed_data(conn: sqlite3.Connection):
 def authenticate(username: str, password: str):
     conn = get_conn()
     row = conn.execute(
-        """SELECT u.id as user_id, u.username, u.role, u.staff_id, s.name as staff_name, s.status as staff_status
+        """SELECT u.id as user_id, u.username, u.role, u.staff_id, u.password_hash, u.password_salt,
+                  s.name as staff_name, s.status as staff_status
            FROM users u LEFT JOIN staff s ON s.id = u.staff_id
-           WHERE u.username = ? AND u.password_hash = ?""",
-        (username, hash_password(password)),
+           WHERE u.username = ?""",
+        (username,),
     ).fetchone()
     conn.close()
-    if row and (row["staff_status"] is None or row["staff_status"] == "Aktif"):
-        return dict(row)
-    return None
+    if not row:
+        return None
+    computed = hash_password(password, row["password_salt"])
+    if not hmac.compare_digest(computed, row["password_hash"]):
+        return None
+    if row["staff_status"] is not None and row["staff_status"] != "Aktif":
+        return None
+    result = dict(row)
+    result.pop("password_hash", None)
+    result.pop("password_salt", None)
+    return result
 
 
 def create_user(username: str, password: str, staff_id: int, role: str):
+    pwd_hash, pwd_salt = hash_password(password)
     conn = get_conn()
     conn.execute(
-        "INSERT INTO users (username, password_hash, staff_id, role) VALUES (?,?,?,?)",
-        (username, hash_password(password), staff_id, role),
+        "INSERT INTO users (username, password_hash, password_salt, staff_id, role) VALUES (?,?,?,?,?)",
+        (username, pwd_hash, pwd_salt, staff_id, role),
     )
     conn.commit()
     conn.close()

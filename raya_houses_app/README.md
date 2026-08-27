@@ -47,8 +47,8 @@ Database SQLite (`raya_houses_app/data/raya_houses.db`) akan dibuat otomatis bes
 | agent.andi   | agent123    | Agent   |
 
 ⚠️ Ganti seluruh password ini sebelum digunakan di lingkungan produksi. Hashing password saat ini
-menggunakan SHA-256 + pepper statis — cukup untuk MVP internal, namun untuk produksi sesungguhnya
-sebaiknya diganti dengan bcrypt/argon2 dan salt unik per pengguna.
+menggunakan PBKDF2-HMAC-SHA256 (200.000 iterasi) dengan salt acak unik per pengguna — cukup aman
+untuk MVP internal, namun untuk produksi skala besar pertimbangkan bcrypt/argon2.
 
 ## 🗂️ Struktur proyek
 

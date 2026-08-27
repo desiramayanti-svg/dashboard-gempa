@@ -35,12 +35,9 @@ with tab_summary:
         c3.metric("📈 Laba Bersih", style.format_rupiah(laba))
 
         df_all["bulan"] = df_all["date"].dt.to_period("M").astype(str)
-        monthly = df_all.groupby("bulan").apply(
-            lambda g: pd.Series({
-                "Pemasukan": g.loc[g["amount"] > 0, "amount"].sum(),
-                "Pengeluaran": -g.loc[g["amount"] < 0, "amount"].sum(),
-            })
-        ).reset_index()
+        masuk = df_all.loc[df_all["amount"] > 0].groupby("bulan")["amount"].sum().rename("Pemasukan")
+        keluar = (-df_all.loc[df_all["amount"] < 0].groupby("bulan")["amount"].sum()).rename("Pengeluaran")
+        monthly = pd.concat([masuk, keluar], axis=1).fillna(0).reset_index()
         monthly_melt = monthly.melt(id_vars="bulan", value_vars=["Pemasukan", "Pengeluaran"], var_name="Jenis", value_name="Nilai")
 
         fig = px.bar(monthly_melt, x="bulan", y="Nilai", color="Jenis", barmode="group",
