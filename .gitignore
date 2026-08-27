@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Database Raya Houses (dibuat & di-seed otomatis saat pertama kali dijalankan)
+raya_houses_app/data/*.db
